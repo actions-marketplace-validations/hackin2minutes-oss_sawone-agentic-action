@@ -1,0 +1,101 @@
+name: 'SawOne-Agentic: AI & Agent Security'
+description: 'DevSecOps scanner for Agentic AI, MCP, LLMs, and ML systems. Auto-detects frameworks and maps to OWASP & ATLAS.'
+author: 'hackin2minutes-oss'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  path:
+    description: 'Path to scan (repository root or sub-directory)'
+    required: false
+    default: '.'
+  config:
+    description: 'Path to .sawone.yml configuration file'
+    required: false
+    default: '.sawone.yml'
+  phases:
+    description: 'DevSecOps phases to execute (all, or comma-separated list of plan,code,build,test,release)'
+    required: false
+    default: 'all'
+  severity:
+    description: 'Findings at or above this level fail the gate (e.g. HIGH,CRITICAL)'
+    required: false
+    default: 'HIGH,CRITICAL'
+  enforce:
+    description: 'If true, security gate failures exit non-zero; if false, reports are generated without blocking'
+    required: false
+    default: 'true'
+  languages:
+    description: 'Report languages (comma-separated, e.g. en,ar)'
+    required: false
+    default: 'en,ar'
+  redteam-endpoint:
+    description: 'Optional live LLM endpoint you own to run adversarial red-teaming (garak + promptfoo)'
+    required: false
+    default: ''
+  redteam-profile:
+    description: 'Red-team probe profile (quick or full)'
+    required: false
+    default: 'quick'
+
+outputs:
+  passed:
+    description: 'true if all security gates passed, false otherwise'
+    value: ${{ steps.scan.outputs.passed }}
+  failed:
+    description: 'Count of failed security gates'
+    value: ${{ steps.scan.outputs.failed }}
+  reports-dir:
+    description: 'Path where generated PDF, HTML, SARIF, and JSON evidence reports are stored'
+    value: ${{ steps.scan.outputs.reports-dir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run SawOne-Agentic Security Scanner
+      id: scan
+      shell: bash
+      env:
+        IN_PATH: ${{ inputs.path }}
+        IN_CONFIG: ${{ inputs.config }}
+        IN_PHASES: ${{ inputs.phases }}
+        IN_SEVERITY: ${{ inputs.severity }}
+        IN_ENFORCE: ${{ inputs.enforce }}
+        IN_LANGUAGES: ${{ inputs.languages }}
+        IN_ENDPOINT: ${{ inputs.redteam-endpoint }}
+        IN_RT_PROFILE: ${{ inputs.redteam-profile }}
+        IMAGE: 'ghcr.io/hackin2minutes-oss/sawone-agentic-scanner:1'
+      run: |
+        set -uo pipefail
+        target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
+        reports="${target}/sawone-agentic-reports"
+        mkdir -p "${reports}"
+
+        echo "Pulling latest SawOne-Agentic scanner image..."
+        docker pull -q "${IMAGE}" || true
+
+        echo "Starting SawOne-Agentic scan across phases: ${IN_PHASES}..."
+        code=0
+        docker run --rm           -v /var/run/docker.sock:/var/run/docker.sock           -v "${target}:${target}"           -w "${target}"           -e SCAN_PHASES="${IN_PHASES}"           -e SCAN_CONFIG="${IN_CONFIG}"           -e SCAN_SEVERITY="${IN_SEVERITY}"           -e SCAN_ENFORCE="${IN_ENFORCE}"           -e SCAN_LANGUAGES="${IN_LANGUAGES}"           -e SAWONE_LLM_ENDPOINT="${IN_ENDPOINT}"           -e SCAN_REDTEAM_PROFILE="${IN_RT_PROFILE}"           -e REPO="${GITHUB_REPOSITORY:-local}"           -e SHA="${GITHUB_SHA:-head}"           -e REF="${GITHUB_REF:-refs/heads/main}"           -e RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-local}/actions/runs/${GITHUB_RUN_ID:-0}"           "${IMAGE}" --path "${target}" --reports "${reports}" || code=$?
+
+        echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
+
+        if [ -f "${reports}/summary.md" ]; then
+          cat "${reports}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        if [ -f "${reports}/summary.json" ]; then
+          failed=$(jq '[.stages[] | select(.status == "failed")] | length' "${reports}/summary.json" 2>/dev/null || echo 0)
+          echo "failed=${failed}" >> "$GITHUB_OUTPUT"
+          echo "passed=$([ "$failed" = 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        else
+          echo "failed=0" >> "$GITHUB_OUTPUT"
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ "${IN_ENFORCE}" = "true" ] && [ "${code}" -ne 0 ]; then
+          echo "::error::SawOne-Agentic security gates failed."
+          exit "${code}"
+        fi
