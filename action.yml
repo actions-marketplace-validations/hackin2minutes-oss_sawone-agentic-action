@@ -95,7 +95,7 @@ runs:
       run: |
         set -uo pipefail
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
-        reports="${target}/sawone-agentic-reports"
+        reports="${RUNNER_TEMP:-/tmp}/sawone-agentic-reports"
         mkdir -p "${reports}"
         echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
 
