@@ -122,7 +122,14 @@ runs:
         echo "Starting SawOne-Agentic scan across phases: ${IN_PHASES}..."
         code=0
         # 3. Mount target source as read-only (:ro); only reports directory is writable (:rw)
+        # Use host network when red-team endpoint set so scanner can reach host services
+        net_flag=()
+        if [ -n "${IN_ENDPOINT}" ]; then
+          net_flag=("--network" "host")
+        fi
+
         docker run --rm \
+          "${net_flag[@]}" \
           "${sock_mount[@]}" \
           -v "${target}:${target}:ro" \
           -v "${reports_parent}:${reports_parent}:rw" \
