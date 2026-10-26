@@ -1,5 +1,13 @@
 name: 'SawOne-Agentic: AI & Agent Security'
-description: 'DevSecOps scanner for Agentic AI, MCP, LLMs, and ML systems. Auto-detects frameworks and maps to OWASP & ATLAS.'
+description: >-
+  DevSecOps scanner for Agentic AI, MCP, LLMs, and ML systems. Stages: AI threat model;
+  secrets & SAST (Semgrep AI rule pack); prompt, notebook & agent/MCP checks; LLM supply-chain
+  checks (trust_remote_code, unpinned AI deps, unsigned model downloads, model provenance);
+  AI-BOM, model-file scanning (never loaded), training/RAG data checks (PII, poisoning);
+  AI cloud-infrastructure checks; opt-in LLM red teaming (garak + promptfoo); and automatic
+  GitHub PR inline review comments with severity labels and OWASP/CWE tags.
+  Maps to OWASP LLM & ML Top 10, MITRE ATLAS, NIST AI RMF, ISO/IEC 42001 and SDAIA AI Ethics.
+  Generates SARIF, JUnit and PDF reports in English and Arabic.
 author: 'hackin2minutes-oss'
 
 branding:
@@ -40,9 +48,19 @@ inputs:
     required: false
     default: 'quick'
   scanner-image:
-    description: 'Scanner container image (tag or immutable @sha256 digest)'
+    description: 'Scanner container image (tag or immutable @sha256 digest for supply-chain pinning)'
     required: false
     default: 'ghcr.io/hackin2minutes-oss/sawone-si-scanner:1'
+  pr-review:
+    description: >-
+      Post inline security findings as GitHub Pull Request review comments
+      (REQUEST_CHANGES on failures, COMMENT on pass). Requires pull-requests: write permission.
+    required: false
+    default: 'true'
+  pr-max-comments:
+    description: 'Maximum number of inline PR review comments to post (1-50)'
+    required: false
+    default: '25'
 
 outputs:
   passed:
@@ -70,7 +88,10 @@ runs:
         IN_LANGUAGES: ${{ inputs.languages }}
         IN_ENDPOINT: ${{ inputs.redteam-endpoint }}
         IN_RT_PROFILE: ${{ inputs.redteam-profile }}
+        IN_PR_REVIEW: ${{ inputs.pr-review }}
+        IN_PR_MAX_COMMENTS: ${{ inputs.pr-max-comments }}
         IMAGE: ${{ inputs.scanner-image }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -uo pipefail
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
@@ -88,7 +109,7 @@ runs:
 
         # 2. Explicit image pull (no silent failure hiding)
         echo "Verifying scanner image (${IMAGE})..."
-        if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+        if ! docker image inspect "${IMAGE}" > /dev/null 2>&1; then
           echo "Pulling scanner image ${IMAGE}..."
           if ! docker pull -q "${IMAGE}"; then
             echo "::error::Failed to pull scanner image: ${IMAGE}"
@@ -115,6 +136,12 @@ runs:
           -e SHA="${GITHUB_SHA:-head}" \
           -e REF="${GITHUB_REF:-refs/heads/main}" \
           -e RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-local}/actions/runs/${GITHUB_RUN_ID:-0}" \
+          -e GITHUB_TOKEN="${GH_TOKEN}" \
+          -e GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-}" \
+          -e GITHUB_SHA="${GITHUB_SHA:-}" \
+          -e GITHUB_EVENT_PATH="${GITHUB_EVENT_PATH:-}" \
+          -e SAWONE_PR_REVIEW="${IN_PR_REVIEW}" \
+          -e SAWONE_PR_MAX_COMMENTS="${IN_PR_MAX_COMMENTS}" \
           "${IMAGE}" --path "${target}" --reports "${reports}" || code=$?
 
         echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
@@ -153,3 +180,19 @@ runs:
             exit "${code}"
           fi
         fi
+
+    - name: Upload scan reports
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: sawone-agentic-reports
+        path: ${{ steps.scan.outputs.reports-dir }}
+        if-no-files-found: warn
+
+    - name: Publish to GitHub Code Scanning
+      if: >-
+        always() && steps.scan.outputs.reports-dir != '' &&
+        github.event.repository.visibility == 'public'
+      uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+      with:
+        sarif_file: ${{ steps.scan.outputs.reports-dir }}/sarif
