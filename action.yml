@@ -95,8 +95,9 @@ runs:
       run: |
         set -uo pipefail
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
-        reports="${RUNNER_TEMP:-/tmp}/sawone-agentic-reports"
-        mkdir -p "${reports}"
+        reports_parent="${RUNNER_TEMP:-/tmp}"
+        reports="${reports_parent}/sawone-agentic-reports"
+        mkdir -p "${reports_parent}"
         echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
 
         # 1. Least Privilege Runner Isolation:
@@ -124,7 +125,7 @@ runs:
         docker run --rm \
           "${sock_mount[@]}" \
           -v "${target}:${target}:ro" \
-          -v "${reports}:${reports}:rw" \
+          -v "${reports_parent}:${reports_parent}:rw" \
           -w "${target}" \
           -e SCAN_PHASES="${IN_PHASES}" \
           -e SCAN_CONFIG="${IN_CONFIG}" \
