@@ -50,7 +50,7 @@ inputs:
   scanner-image:
     description: 'Scanner container image (tag or immutable @sha256 digest for supply-chain pinning)'
     required: false
-    default: 'ghcr.io/hackin2minutes-oss/sawone-si-scanner:1'
+    default: 'ghcr.io/hackin2minutes-oss/sawone-scanner:1'
   pr-review:
     description: >-
       Post inline security findings as GitHub Pull Request review comments
@@ -97,6 +97,7 @@ runs:
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
         reports="${target}/sawone-agentic-reports"
         mkdir -p "${reports}"
+        echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
 
         # 1. Least Privilege Runner Isolation:
         # Only mount /var/run/docker.sock when red-teaming or container tests require it
@@ -144,8 +145,6 @@ runs:
           -e SAWONE_PR_MAX_COMMENTS="${IN_PR_MAX_COMMENTS}" \
           "${IMAGE}" --path "${target}" --reports "${reports}" || code=$?
 
-        echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
-
         if [ -f "${reports}/summary.md" ]; then
           cat "${reports}/summary.md" >> "$GITHUB_STEP_SUMMARY"
         fi
@@ -182,11 +181,11 @@ runs:
         fi
 
     - name: Upload scan reports
-      if: always()
+      if: always() && steps.scan.outputs.reports-dir != ''
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: sawone-agentic-reports
-        path: ${{ steps.scan.outputs.reports-dir }}
+        path: ${{ steps.scan.outputs.reports-dir }}/**
         if-no-files-found: warn
 
     - name: Publish to GitHub Code Scanning
