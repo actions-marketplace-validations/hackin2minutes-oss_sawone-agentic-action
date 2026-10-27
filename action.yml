@@ -95,11 +95,10 @@ runs:
       run: |
         set -uo pipefail
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
-        reports_parent="${RUNNER_TEMP:-/tmp}"
-        reports="${reports_parent}/sawone-agentic-reports"
-        # Pre-create ALL output directories with open permissions so the container
-        # user (root inside Docker) can write SARIF/raw/log files without hitting
-        # "no such file or directory" errors at runtime.
+        reports="${target}/sawone-agentic-reports"
+        # Pre-create ALL output directories with open permissions so containerized
+        # tools (gitleaks, trivy, osv-scanner, trufflehog) running as sibling containers
+        # with -v "${target}:${target}" can write to their respective report paths.
         mkdir -p "${reports}/sarif" "${reports}/raw" "${reports}/logs" "${reports}/evidence"
         chmod -R 777 "${reports}" 2>/dev/null || true
 
@@ -131,7 +130,6 @@ runs:
 
         echo "Starting SawOne-Agentic scan across phases: ${IN_PHASES}..."
         code=0
-        # 3. Mount target source as read-only (:ro); only reports directory is writable (:rw)
         # Use host network when red-team endpoint set so scanner can reach host services
         net_flag=()
         if [ -n "${IN_ENDPOINT}" ]; then
@@ -141,8 +139,7 @@ runs:
         docker run --rm \
           "${net_flag[@]}" \
           "${sock_mount[@]}" \
-          -v "${target}:${target}:ro" \
-          -v "${reports_parent}:${reports_parent}:rw" \
+          -v "${target}:${target}" \
           -w "${target}" \
           -e SCAN_PHASES="${IN_PHASES}" \
           -e SCAN_CONFIG="${IN_CONFIG}" \
