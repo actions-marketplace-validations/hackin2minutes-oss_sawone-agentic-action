@@ -95,9 +95,19 @@ runs:
       run: |
         set -uo pipefail
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
-        reports_parent="${RUNNER_TEMP:-/tmp}"
-        reports="${reports_parent}/sawone-agentic-reports"
-        mkdir -p "${reports_parent}"
+        reports="${target}/sawone-agentic-reports"
+        # Pre-create ALL output directories with open permissions so containerized
+        # tools (gitleaks, trivy, osv-scanner, trufflehog) running as sibling containers
+        # with -v "${target}:${target}" can write to their respective report paths.
+        mkdir -p "${reports}/sarif" "${reports}/raw" "${reports}/logs" "${reports}/evidence"
+        touch "${reports}/raw/trufflehog-exclude.txt"
+        chmod -R 777 "${reports}" 2>/dev/null || true
+
+        # Clean up any stale named containers from a previous run on this runner.
+        # Needed when a prior job was cancelled mid-flight and left containers running.
+        for cname in sawone-1-app sawone-app; do
+          docker rm -f "${cname}" 2>/dev/null || true
+        done
         echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
 
         # 1. Least Privilege Runner Isolation:
@@ -121,7 +131,6 @@ runs:
 
         echo "Starting SawOne-Agentic scan across phases: ${IN_PHASES}..."
         code=0
-        # 3. Mount target source as read-only (:ro); only reports directory is writable (:rw)
         # Use host network when red-team endpoint set so scanner can reach host services
         net_flag=()
         if [ -n "${IN_ENDPOINT}" ]; then
@@ -131,8 +140,7 @@ runs:
         docker run --rm \
           "${net_flag[@]}" \
           "${sock_mount[@]}" \
-          -v "${target}:${target}:ro" \
-          -v "${reports_parent}:${reports_parent}:rw" \
+          -v "${target}:${target}" \
           -w "${target}" \
           -e SCAN_PHASES="${IN_PHASES}" \
           -e SCAN_CONFIG="${IN_CONFIG}" \
@@ -197,9 +205,13 @@ runs:
         if-no-files-found: warn
 
     - name: Publish to GitHub Code Scanning
+      # Requires the calling workflow to grant: permissions: { security-events: write }
+      # Skipped automatically on forks (pull_request from a fork) because the token
+      # cannot write to the upstream repository's code-scanning alerts.
       if: >-
         always() && steps.scan.outputs.reports-dir != '' &&
-        github.event.repository.visibility == 'public'
+        (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) &&
+        (github.event.repository.visibility == 'public')
       uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
       with:
         sarif_file: ${{ steps.scan.outputs.reports-dir }}/sarif
