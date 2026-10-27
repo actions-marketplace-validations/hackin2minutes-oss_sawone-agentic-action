@@ -100,6 +100,7 @@ runs:
         # tools (gitleaks, trivy, osv-scanner, trufflehog) running as sibling containers
         # with -v "${target}:${target}" can write to their respective report paths.
         mkdir -p "${reports}/sarif" "${reports}/raw" "${reports}/logs" "${reports}/evidence"
+        touch "${reports}/raw/trufflehog-exclude.txt"
         chmod -R 777 "${reports}" 2>/dev/null || true
 
         # Clean up any stale named containers from a previous run on this runner.
