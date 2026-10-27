@@ -97,7 +97,17 @@ runs:
         target="$(realpath "${GITHUB_WORKSPACE}/${IN_PATH}")"
         reports_parent="${RUNNER_TEMP:-/tmp}"
         reports="${reports_parent}/sawone-agentic-reports"
-        mkdir -p "${reports_parent}"
+        # Pre-create ALL output directories with open permissions so the container
+        # user (root inside Docker) can write SARIF/raw/log files without hitting
+        # "no such file or directory" errors at runtime.
+        mkdir -p "${reports}/sarif" "${reports}/raw" "${reports}/logs" "${reports}/evidence"
+        chmod -R 777 "${reports}" 2>/dev/null || true
+
+        # Clean up any stale named containers from a previous run on this runner.
+        # Needed when a prior job was cancelled mid-flight and left containers running.
+        for cname in sawone-1-app sawone-app; do
+          docker rm -f "${cname}" 2>/dev/null || true
+        done
         echo "reports-dir=${reports}" >> "$GITHUB_OUTPUT"
 
         # 1. Least Privilege Runner Isolation:
@@ -197,9 +207,13 @@ runs:
         if-no-files-found: warn
 
     - name: Publish to GitHub Code Scanning
+      # Requires the calling workflow to grant: permissions: { security-events: write }
+      # Skipped automatically on forks (pull_request from a fork) because the token
+      # cannot write to the upstream repository's code-scanning alerts.
       if: >-
         always() && steps.scan.outputs.reports-dir != '' &&
-        github.event.repository.visibility == 'public'
+        (github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository) &&
+        (github.event.repository.visibility == 'public')
       uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
       with:
         sarif_file: ${{ steps.scan.outputs.reports-dir }}/sarif
